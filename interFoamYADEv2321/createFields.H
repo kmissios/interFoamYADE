@@ -1,18 +1,51 @@
-#include "readGravitationalAcceleration.H"
 
-word continuousPhaseName
+
+#include "createRDeltaT.H"
+
+Info<< "Reading field p_rgh\n" << endl;
+volScalarField p_rgh
 (
-    IOdictionary
+    IOobject
     (
-        IOobject
-        (
-            "transportProperties",
-            runTime.constant(),
-            mesh,
-            IOobject::MUST_READ
-        )
-    ).lookup("continuousPhaseName")
+        "p_rgh",
+        runTime.timeName(),
+        mesh,
+        IOobject::MUST_READ,
+        IOobject::AUTO_WRITE
+    ),
+    mesh
 );
+
+Info<< "Reading field U\n" << endl;
+volVectorField U
+(
+    IOobject
+    (
+        "U",
+        runTime.timeName(),
+        mesh,
+        IOobject::MUST_READ,
+        IOobject::AUTO_WRITE
+    ),
+    mesh
+);
+
+#include "createPhi.H"
+
+
+Info<< "Reading transportProperties\n" << endl;
+
+immiscibleIncompressibleTwoPhaseMixture mixture(U, phi);
+
+volScalarField& alpha1(mixture.alpha1());
+volScalarField& alpha2(mixture.alpha2());
+
+const dimensionedScalar& rho1 = mixture.rho1();
+const dimensionedScalar& rho2 = mixture.rho2();
+
+
+// const dimensionedScalar& nu1 = mixture.calcNu();
+// const dimensionedScalar& nu1 = mixture.calcNu();
 
 
 IOdictionary transportProperties
@@ -27,23 +60,66 @@ IOdictionary transportProperties
 };
 
 
+//- YADE particle density
+dimensionedScalar partDensity (
+    "partDensity",
+     dimDensity,
+     transportProperties.lookup("partDensity")
+);
 
-
-Info<< "Reading field U\n" << endl;
-volVectorField Uc
+// Need to store rho for ddt(rho, U)
+volScalarField rho
 (
     IOobject
     (
-        IOobject::groupName("U", continuousPhaseName),
+        "rho",
         runTime.timeName(),
         mesh,
-        IOobject::MUST_READ,
-        IOobject::AUTO_WRITE
+        IOobject::READ_IF_PRESENT
     ),
-    mesh
+    alpha1*rho1 + alpha2*rho2
+);
+rho.oldTime();
+
+
+
+volScalarField mu = mixture.mu();
+
+volScalarField nu = mu*rho;
+
+
+// Mass flux
+surfaceScalarField rhoPhi
+(
+    IOobject
+    (
+        "rhoPhi",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
+    ),
+    fvc::interpolate(rho)*phi
 );
 
-Info<< "Reading field p\n" << endl;
+typedef incompressibleInterPhaseTransportModel
+    <
+        immiscibleIncompressibleTwoPhaseMixture
+    > transportModelType;
+
+autoPtr<transportModelType> turbulence
+(
+    new transportModelType
+    (
+        rho, U, phi, rhoPhi, mixture
+    )
+);
+
+#include "readGravitationalAcceleration.H"
+#include "readhRef.H"
+#include "gh.H"
+
+
 volScalarField p
 (
     IOobject
@@ -51,87 +127,36 @@ volScalarField p
         "p",
         runTime.timeName(),
         mesh,
-        IOobject::MUST_READ,
+        IOobject::NO_READ,
         IOobject::AUTO_WRITE
     ),
-    mesh
-);
-
-dimensionedScalar partDensity (
-    "partDensity",
-     dimDensity,
-     transportProperties.lookup("partDensity")
-);
-
-
-Info<< "Reading/calculating continuous-phase face flux field phic\n"
-    << endl;
-
-surfaceScalarField phic
-(
-    IOobject
-    (
-        IOobject::groupName("phi", continuousPhaseName),
-        runTime.timeName(),
-        mesh,
-        IOobject::READ_IF_PRESENT,
-        IOobject::AUTO_WRITE
-    ),
-    linearInterpolate(Uc) & mesh.Sf()
+    p_rgh + rho*gh
 );
 
 label pRefCell = 0;
 scalar pRefValue = 0.0;
-setRefCell(p, pimple.dict(), pRefCell, pRefValue);
-mesh.setFluxRequired(p.name());
-
-Info<< "Creating turbulence model\n" << endl;
-
-singlePhaseTransportModel continuousPhaseTransport(Uc, phic);
-
-dimensionedScalar rhocValue
+setRefCell
 (
-    IOobject::groupName("rho", continuousPhaseName),
-    dimDensity,
-    continuousPhaseTransport.lookup
+    p,
+    p_rgh,
+    pimple.dict(),
+    pRefCell,
+    pRefValue
+);
+
+if (p_rgh.needReference())
+{
+    p += dimensionedScalar
     (
-        IOobject::groupName("rho", continuousPhaseName)
-    )
-);
+        "p",
+        p.dimensions(),
+        pRefValue - getRefCellValue(p, pRefCell)
+    );
+    p_rgh = p - rho*gh;
+}
 
-
-dimensionedScalar nuValue (
-   "kinematic viscosity",
-  dimViscosity,
-  transportProperties.lookup("nu")
-);
-
-volScalarField rhoc
-(
-    IOobject
-    (
-        rhocValue.name(),
-        runTime.timeName(),
-        mesh,
-        IOobject::NO_READ,
-        IOobject::AUTO_WRITE
-    ),
-    mesh,
-    rhocValue
-);
-
-volScalarField muc
-(
-    IOobject
-    (
-        IOobject::groupName("mu", continuousPhaseName),
-        runTime.timeName(),
-        mesh,
-        IOobject::NO_READ,
-        IOobject::AUTO_WRITE
-    ),
-    rhoc*continuousPhaseTransport.nu()
-);
+mesh.setFluxRequired(p_rgh.name());
+mesh.setFluxRequired(alpha1.name());
 
 Info << "Creating field alphac\n" << endl;
 // alphac must be constructed before the cloud
@@ -140,7 +165,7 @@ volScalarField alphac
 (
     IOobject
     (
-        IOobject::groupName("alpha", continuousPhaseName),
+        "alphac",
         runTime.timeName(),
         mesh,
         IOobject::NO_READ,
@@ -158,9 +183,8 @@ volVectorField divT(
       mesh,
       IOobject::NO_READ,
       IOobject::NO_WRITE),
-      fvc::laplacian(Uc)
+      fvc::laplacian(U)
 );
-
 
 
 volTensorField vGrad(
@@ -170,7 +194,7 @@ volTensorField vGrad(
       mesh,
       IOobject::NO_READ,
       IOobject::NO_WRITE),
-      fvc::grad(Uc)
+      fvc::grad(U)
     );
 
 
@@ -185,29 +209,35 @@ volVectorField gradP(
 );
 
 
-
-volScalarField uSourceDrag(
-    IOobject(
+volScalarField uSourceDrag
+(
+    IOobject
+    (
       "uSourceDrag",
       runTime.timeName(),
       mesh,
       IOobject::NO_READ,
-      IOobject::NO_WRITE),
+      IOobject::NO_WRITE
+    ),
     mesh,
     dimensionedScalar("dragCoeff", dimensionSet(0,0,-1,0,0,0,0), 0 )
 );
 
-
-volScalarField uCoeff(
-    IOobject(
-      "uCoeffDrag",
-      runTime.timeName(),
-      mesh,
-      IOobject::NO_READ,
-      IOobject::NO_WRITE),
+volScalarField uCoeff
+(
+    IOobject
+    (
+        "uCoeffDrag",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
+    ),
     mesh,
-    dimensionedScalar("dragCoeffFluid", dimensionSet(0,0,-1,0,0,0,0), 0 )
-); 
+    dimensionedScalar("dragCoeffFluid", dimensionSet(0,0,-1,0,0,0,0), 0 
+    )
+);
+
 
 volVectorField uInterp(
     IOobject(
@@ -220,6 +250,7 @@ volVectorField uInterp(
     dimensionedVector("interpVel", dimensionSet(0,1,-1,0,0,0,0), vector(0,0,0) )
 );
 
+
 volVectorField uSource(
     IOobject(
       "uSource",
@@ -230,8 +261,6 @@ volVectorField uSource(
     mesh,
     dimensionedVector("volSource", dimensionSet(0,1,-2,0,0,0,0), vector(0,0,0) )
 );
-
-
 
 volVectorField uParticle(
     IOobject(
@@ -252,32 +281,15 @@ volVectorField ddtU_f (
       mesh,
       IOobject::NO_READ,
       IOobject::NO_WRITE),
-      fvc::ddt(Uc)+fvc::div(phic, Uc)
+      fvc::ddt(U)+fvc::div(phi, U)
 );
 
 
 
 surfaceScalarField alphacf("alphacf", fvc::interpolate(alphac));
 
-surfaceScalarField alphaPhic
-(
-    IOobject::groupName
-    (
-        "alphaPhi",
-        continuousPhaseName
-    ),
-    alphacf*phic
-);
+surfaceScalarField alphaPhic("alphaPhic", alphacf*phi);
 
-autoPtr<DPMIncompressibleTurbulenceModel<singlePhaseTransportModel>>
-continuousPhaseTurbulence
-(
-    DPMIncompressibleTurbulenceModel<singlePhaseTransportModel>::New
-    (
-        alphac,
-        Uc,
-        alphaPhic,
-        phic,
-        continuousPhaseTransport
-    )
-);
+
+#include "createMRF.H"
+#include "createFvOptions.H"

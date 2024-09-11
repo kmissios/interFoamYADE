@@ -1,9 +1,11 @@
 /*---------------------------------------------------------------------------*\
   =========                 |
   \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
-   \\    /   O peration     | Website:  https://openfoam.org
-    \\  /    A nd           | Copyright (C) 2013-2018 OpenFOAM Foundation
+   \\    /   O peration     |
+    \\  /    A nd           | www.openfoam.com
      \\/     M anipulation  |
+-------------------------------------------------------------------------------
+    Copyright (C) 2022 OpenCFD Ltd.
 -------------------------------------------------------------------------------
 License
     This file is part of OpenFOAM.
@@ -22,27 +24,35 @@ License
     along with OpenFOAM.  If not, see <http://www.gnu.org/licenses/>.
 
 Global
-    continuityErrs
+    CourantNo
 
 Description
-    Calculates and prints the continuity errors.
+    Calculates and outputs the mean and maximum Courant Numbers.
 
 \*---------------------------------------------------------------------------*/
 
+scalar CoNum = 0.0;
+scalar meanCoNum = 0.0;
+
+if (mesh.nInternalFaces())
 {
-    volScalarField contErr(fvc::ddt(alphac) + fvc::div(alphacf*phic));
+    surfaceScalarField phiMask
+    (
+        localMin<scalar>(mesh).interpolate(cellMask + interpolatedCells)
+    );
 
-    scalar sumLocalContErr = runTime.deltaTValue()*
-        mag(contErr)().weightedAverage(mesh.V()).value();
+    scalarField sumPhi
+    (
+        fvc::surfaceSum(mag(phiMask*phi))().internalField()
+    );
 
-    scalar globalContErr = runTime.deltaTValue()*
-        contErr.weightedAverage(mesh.V()).value();
-    cumulativeContErr += globalContErr;
+    CoNum = 0.5*gMax(sumPhi/mesh.V().field())*runTime.deltaTValue();
 
-    Info<< "time step continuity errors : sum local = " << sumLocalContErr
-        << ", global = " << globalContErr
-        << ", cumulative = " << cumulativeContErr
-        << endl;
+    meanCoNum =
+        0.5*(gSum(sumPhi)/gSum(mesh.V().field()))*runTime.deltaTValue();
 }
+
+Info<< "Courant Number mean: " << meanCoNum
+    << " max: " << CoNum << endl;
 
 // ************************************************************************* //
