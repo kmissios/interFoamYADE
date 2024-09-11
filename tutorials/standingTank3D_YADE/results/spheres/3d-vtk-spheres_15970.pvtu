@@ -1,0 +1,12 @@
+<VTKFile type="PUnstructuredGrid" version="0.1" byte_order="LittleEndian" header_type="UInt32" compressor="vtkZLibDataCompressor">
+  <PUnstructuredGrid GhostLevel="0">
+    <PPointData>
+      <PDataArray type="Float64" Name="radii"/>
+      <PDataArray type="Float64" Name="subdomain"/>
+    </PPointData>
+    <PPoints>
+      <PDataArray type="Float32" Name="Points" NumberOfComponents="3"/>
+    </PPoints>
+    <Piece Source="3d-vtk-spheres_15970_0.vtu"/>
+  </PUnstructuredGrid>
+</VTKFile>
