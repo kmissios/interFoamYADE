@@ -434,7 +434,7 @@ void Foam::FoamYade::calcHydroForce(YadeProc* yProc){
 		initParticleForce(prt.get());
 		if (isGaussianInterp) {
 			hydroDragForce(prt.get());
-			archimedesForce(prt.get());
+			// archimedesForce(prt.get());
 		} else {
 			stokesDragForce(prt.get());
 		}
@@ -469,7 +469,7 @@ void Foam::FoamYade::hydroDragForce(YadeParticle*  prt){
 	}
 
 	double pFraction_p = 1-pFraction_f;
-
+    Info	<<	"Hello"	<<	rhof	<<	endl;
 	const vector urelvel = (uf-prt->linearVelocity);
 	const double magUR = mag(urelvel);
 	const double Re =  ((magUR*prt->dia)/nuf);
@@ -479,6 +479,7 @@ void Foam::FoamYade::hydroDragForce(YadeParticle*  prt){
 
 	if (pFraction_f > 0.8){
 		coeff = 0.75*cd*pFraction_f*pFraction_p*(1/prt->dia)*rhof*magUR*std::pow(pFraction_f, -2.65);
+	
 	} else {
 		// const double& mu_f = nu*rho;
 		const double mu_f = nuf*rhof;
@@ -488,7 +489,8 @@ void Foam::FoamYade::hydroDragForce(YadeParticle*  prt){
 		double cf2 = 1.75*pFraction_p*rhof*(1/(prt->dia*pFraction_f))*magUR;
 		coeff = cf1+cf2;
 	}
-
+    
+	Info <<"coeff = " << coeff << endl;
 
 	vector hf = pv*coeff*urelvel*(1.0/pFraction_p);
 	prt->hydroForce += hf;
